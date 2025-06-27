@@ -36,7 +36,7 @@
     <p>⚪ 白色方塊：藍色方塊數量＋1（上限10）</p>
     <p>🟡 黃色圓形：射擊頻率變快5%</p>
     <p>🟢 綠色三角：移動速度變快5%</p>
-    <p>🌟 紫色星星：按空白鍵清除敵人，但藍色方塊數量減半</p>
+    <p>🌟 紫色星星：連點畫面清除敵人，但藍色方塊數量減半</p>
     <hr />
     <p id="scoreInfo"></p>
     <p id="speedInfo"></p>
@@ -334,6 +334,26 @@ document.addEventListener('keydown', e => {
   keys[e.key] = true;
 });
 document.addEventListener('keyup', e => keys[e.key] = false);
+
+canvas.addEventListener('dblclick', () => {
+  if (hasStarPower) {
+    enemies = [];
+    const halfCount = Math.floor(blueBlocks.length / 2);
+    blueBlocks = blueBlocks.slice(0, halfCount);
+    hasStarPower = false;
+
+    // 播放音效（如果有）
+    if (typeof starSound !== 'undefined') {
+      starSound.currentTime = 0;
+      starSound.volume = 0.5;
+      starSound.play();
+    }
+
+    // 閃白三下
+    flashCount = 6;
+    flashTimer = 0;
+  }
+});
 
 let tiltOffset = 0;
 
