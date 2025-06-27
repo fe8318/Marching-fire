@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>藍色方塊射擊遊戲</title>
+  <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      margin-top: 20px;
+      font-family: sans-serif;
+      color: white;
+      background: #000;
+    }
+    canvas {
+      background: #000;
+      display: block;
+      width: 450px;
+      height: 800px;
+      border: 1px solid white;
+    }
+    #infoPanel {
+      width: 150px;
+      margin-left: 20px;
+      line-height: 1.6em;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="450" height="800"></canvas>
+  <div id="infoPanel">
+    <h3>道具效果說明</h3>
+    <p>音效來源：https://taira-komori.jpn.org/freesoundtw.html</p>
+    <p>⚪ 白色方塊：藍色方塊數量＋1（上限10）</p>
+    <p>🟡 黃色圓形：射擊頻率變快5%</p>
+    <p>🟢 綠色三角：移動速度變快5%</p>
+    <p>🌟 紫色星星：按空白鍵清除敵人，但藍色方塊數量減半</p>
+    <hr />
+    <p id="scoreInfo"></p>
+    <p id="speedInfo"></p>
+  </div>
+
+<script>
+const shootSound = new Audio('shoot1.mp3');
+const powerupSound = new Audio('powerup03.mp3');
+const laserSound = new Audio('laser7.mp3');
+const hitSound = new Audio('short_bomb.mp3');
+const damageSound = new Audio('damage1.mp3');
+
+
+// 調整各音效的音量
+shootSound.volume = 0.2;
+powerupSound.volume = 0.3;
+laserSound.volume = 0.9;
+hitSound.volume = 0.1;
+damageSound.volume = 0.1;
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let blueBlocks = new Array(3).fill(0).map(() => ({ xOffset: 0 }));
+const MAX_BLUE_BLOCKS = 8;
+
+let horizontalOffset = 0;
+let bullets = [];
+let enemies = [];
+let items = [];
+let score = 0;
+let shootInterval = 1000;
+const MIN_SHOOT_INTERVAL = 200;
+let moveSpeed = 5;
+let lastShootTime = 0;
+let lastSpawnTime = 0;
+let startTime = performance.now();
+let enemySpeed = 1;
+let hasStarPower = false;
+
+let flashCount = 0;
+let flashTimer = 0;
+
+const blockSize = 18;
+const gap = 22;
+
+function playSoundClone(audio, clone_volume = 1) {
+  const clone = audio.cloneNode();
+  clone.volume = clone_volume;
+  clone.play();
+}
+
+function drawBlock(x, y, color, size = 20) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, size, size);
+}
+
+function drawCircle(x, y, color, radius = 10) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTriangle(x, y, color, size = 20) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + size / 2, y + size);
+  ctx.lineTo(x - size / 2, y + size);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawStar(x, y, color = 'purple', radius = 10) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    ctx.lineTo(
+      x + radius * Math.cos((18 + i * 72) * Math.PI / 180),
+      y - radius * Math.sin((18 + i * 72) * Math.PI / 180)
+    );
+    ctx.lineTo(
+      x + (radius / 2) * Math.cos((54 + i * 72) * Math.PI / 180),
+      y - (radius / 2) * Math.sin((54 + i * 72) * Math.PI / 180)
+    );
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawEnemyCircle(x, y, radius = 10) {
+  drawCircle(x, y, 'red', radius);
+}
+
+function update() {
+  const elapsedTime = Math.floor((performance.now() - startTime) / 1000);
+  enemySpeed = 1 + Math.floor(elapsedTime / 30);
+
+  let maxEnemyHP = Math.max(1, Math.floor(blueBlocks.length / 3 + enemySpeed));
+  shootInterval = Math.max(shootInterval, MIN_SHOOT_INTERVAL);
+
+  if (performance.now() - lastShootTime > shootInterval) {
+    playSoundClone(shootSound, shootSound.volume);
+    for (const block of blueBlocks) {
+      bullets.push({ x: block.renderX + blockSize / 2, y: block.renderY });
+    }
+    lastShootTime = performance.now();
+  }
+
+  bullets.forEach(bullet => bullet.y -= 10);
+  bullets = bullets.filter(b => b.y > 0);
+
+  if (performance.now() - lastSpawnTime > 1000) {
+    for (let i = 0; i < 3; i++) {
+      const enemyRoll = Math.random();
+      const x = Math.random() * (canvas.width - 20) + 10;
+
+      if (enemyRoll < 0.4) {
+        enemies.push({ x, y: 0, hp: maxEnemyHP, type: 'normal' });
+      } else if (enemyRoll < 0.7) {
+        enemies.push({ x, y: 0, hp: Math.max(1, Math.floor(maxEnemyHP / 2)), type: 'inverted', dirX: 1 });
+      } else if (enemyRoll < 0.8) {
+        enemies.push({ x, y: 0, hp: 1, type: 'circle' });
+      }
+
+      const itemRoll = Math.random();
+      if (itemRoll < 0.25) {
+        items.push({ x, y: 0, type: 'white' });
+      } else if (itemRoll < 0.4) {
+        items.push({ x, y: 0, type: 'yellow' });
+      } else if (itemRoll < 0.6) {
+        items.push({ x, y: 0, type: 'green' });
+      } else if (itemRoll < 0.61) {
+        items.push({ x, y: 0, type: 'star' });
+      }
+    }
+    lastSpawnTime = performance.now();
+  }
+
+  enemies.forEach((e, idx) => {
+    if (e.type === 'normal') {
+      e.y += enemySpeed;
+    } else if (e.type === 'inverted') {
+      e.y += enemySpeed;
+      e.x += e.dirX * 2;
+      if (e.x < 10 || e.x > canvas.width - 10) e.dirX *= -1;
+    } else if (e.type === 'circle') {
+      e.y += enemySpeed * 2;
+    }
+  });
+
+  items.forEach(i => i.y += 5);
+
+  for (let b = bullets.length - 1; b >= 0; b--) {
+    const bullet = bullets[b];
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      let dist = Math.hypot(bullet.x - e.x, bullet.y - e.y);
+      let hitDist = e.type === 'circle' ? 10 : 20;
+      if (dist < hitDist) {
+	playSoundClone(damageSound,clone_volume = damageSound.volume);
+        e.hp--;
+        bullets.splice(b, 1);
+        if (e.hp <= 0) {
+          enemies.splice(i, 1);
+          score++;
+        }
+        break;
+      }
+    }
+  }
+
+  for (const block of blueBlocks) {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (Math.abs(block.renderX - item.x) < 20 && Math.abs(block.renderY - item.y) < 20) {
+	playSoundClone(powerupSound,clone_volume = powerupSound.volume);
+        if (item.type === 'white' && blueBlocks.length < MAX_BLUE_BLOCKS) {
+          blueBlocks.push({ xOffset: 0 });
+        } else if (item.type === 'yellow') {
+          shootInterval *= 0.95;
+        } else if (item.type === 'green') {
+          moveSpeed += 0.5;
+        } else if (item.type === 'star') {
+          hasStarPower = true;
+        }
+        items.splice(i, 1);
+      }
+    }
+  }
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.type === 'circle') {
+      let collided = blueBlocks.some(block => Math.hypot(e.x - block.renderX, e.y - block.renderY) < blockSize);
+      if (collided) {
+        moveSpeed *= 0.95;
+        shootInterval *= 1.05;
+        enemies.splice(i, 1);
+        blueBlocks.pop();
+	playSoundClone(hitSound,clone_volume = hitSound.volume);
+      }
+    } else {
+      if (e.y > 780) {
+        enemies.splice(i, 1);
+        blueBlocks.pop();
+	playSoundClone(hitSound,clone_volume = hitSound.volume);
+      }
+    }
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  let count = 0;
+  const layerConfigs = [3, 2, 2, 1];
+  const startY = 780;
+  for (let layer = 0; layer < layerConfigs.length; layer++) {
+    const blocksInLayer = layerConfigs[layer];
+    const layerWidth = (blocksInLayer - 1) * gap;
+    for (let i = 0; i < blocksInLayer; i++) {
+      if (count >= blueBlocks.length) break;
+      let x = canvas.width / 2 + horizontalOffset - layerWidth / 2 + i * gap;
+      let y = startY - layer * gap;
+      drawTriangle(x, y - blockSize, 'blue', blockSize);
+      blueBlocks[count].renderX = x;
+      blueBlocks[count].renderY = y;
+      count++;
+    }
+  }
+
+  bullets.forEach(bullet => drawBlock(bullet.x, bullet.y, 'white', 5));
+
+  enemies.forEach(e => {
+    if (e.type === 'normal') {
+      drawBlock(e.x, e.y, 'red');
+      ctx.fillStyle = 'white';
+      ctx.fillText(e.hp, e.x + 5, e.y + 15);
+    } else if (e.type === 'inverted') {
+      drawTriangle(e.x, e.y, 'red');
+      ctx.fillStyle = 'white';
+      ctx.fillText(e.hp, e.x - 5, e.y + 15);
+    } else if (e.type === 'circle') {
+      drawEnemyCircle(e.x, e.y, 10);
+      ctx.fillStyle = 'white';
+      ctx.fillText(e.hp, e.x - 5, e.y + 5);
+    }
+  });
+
+  items.forEach(item => {
+    if (item.type === 'white') drawBlock(item.x, item.y, 'white');
+    else if (item.type === 'yellow') drawCircle(item.x, item.y, 'yellow');
+    else if (item.type === 'green') drawTriangle(item.x, item.y, 'green');
+    else if (item.type === 'star') drawStar(item.x, item.y);
+  });
+
+  // 閃白效果
+  if (flashCount > 0) {
+    playSoundClone(laserSound,clone_volume = laserSound.volume);
+    flashTimer++;
+    if (flashTimer % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    if (flashTimer >= 2) {
+      flashCount--;
+      flashTimer = 0;
+    }
+  }
+}
+
+function updateInfoPanel() {
+  document.getElementById('scoreInfo').textContent =
+    '分數: ' + score + '\n藍色方塊數: ' + blueBlocks.length;
+  document.getElementById('speedInfo').textContent =
+    '藍色方塊移動速度: ' + moveSpeed.toFixed(2) +
+    (hasStarPower ? '\n可用紫色星星技能：按空白鍵清除敵人（藍色方塊數減半）' : '');
+}
+
+let keys = {};
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (hasStarPower) {
+      enemies = [];
+      const halfCount = Math.floor(blueBlocks.length / 2);
+      blueBlocks = blueBlocks.slice(0, halfCount);
+      hasStarPower = false;
+      flashCount = 6;
+      flashTimer = 0;
+    }
+  }
+  keys[e.key] = true;
+});
+document.addEventListener('keyup', e => keys[e.key] = false);
+
+let tiltOffset = 0;
+
+if (window.DeviceOrientationEvent) {
+  window.addEventListener("deviceorientation", function (event) {
+    // gamma：左右傾斜，值範圍大約在 -90 到 +90
+    let gamma = event.gamma;
+
+    // 設定一個最大可接受的傾斜值（避免太敏感）
+    gamma = Math.max(-30, Math.min(30, gamma));
+
+    // 將 gamma 轉為畫面偏移值
+    tiltOffset = gamma / 30 * canvas.width / 2; // 左右最大移動半畫面寬
+  });
+}
+
+function gameLoop() {
+  if (keys['ArrowLeft']) horizontalOffset -= moveSpeed;
+  if (keys['ArrowRight']) horizontalOffset += moveSpeed;
+
+// 加上手機傾斜控制
+if (Math.abs(tiltOffset) > 5) {
+  horizontalOffset = tiltOffset;
+}
+  const maxOffset = canvas.width / 2;
+  if (horizontalOffset < -maxOffset) horizontalOffset = -maxOffset;
+  if (horizontalOffset > maxOffset) horizontalOffset = maxOffset;
+
+  update();
+  render();
+  updateInfoPanel();
+
+  if (blueBlocks.length > 0) requestAnimationFrame(gameLoop);
+  else alert('遊戲結束！總分：' + score);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
